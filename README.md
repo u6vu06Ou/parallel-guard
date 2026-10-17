@@ -21,6 +21,7 @@ At a Claude Code prompt:
 - **Denies new `agent.spawn` calls** while busy agents are at the cap, or while free physical memory is below the floor. Denials explain themselves and ask you to retry when an agent finishes.
 - **Status line**: after each spawn check it shows `agents 3/8 · free 6.2G` — busy count over the cap, and free memory.
 - **`/parallel` command**: print the same snapshot any time.
+- **`/parallel clean` command**: automatic cleanup of finished git worktrees for the repository your current folder belongs to. A copy is only removed when it passes ALL of these checks: not the main working directory; `git status` clean; its branch fully merged into the main branch; the folder untouched for over 2 hours; no session is running in it (locked, bare and detached copies are always spared). Copies are removed in a safe order — junctions/symlinks inside the copy are deleted alone first (never their target), then `git worktree remove` without `--force`, then `git branch -d` (which itself refuses an unmerged branch), finally `git worktree prune`. If any step fails the copy is kept and the report explains why. Session end never deletes anything — it only tells you how many copies can be cleaned, so cleanup always stays a human-triggered command.
 - **Zero model tokens**: the guard runs entirely as hooks; it never makes a model call.
 - **Fail open**: if the guard itself throws, it lets the spawn through — a broken guard never blocks your work.
 
@@ -53,6 +54,8 @@ Claude Code 外掛：同一時間跑太多 subagent 時擋下新的，或剩餘�
 ```
 
 行為：agent.spawn 被擋時會說明原因；狀態列顯示 `agents 3/8 · free 6.2G`；`/parallel` 隨時查同樣資訊；純 hook 運作、零模型 token；guard 自己出錯時一律放行，不擋工作。
+
+`/parallel clean`：自動收掉做完的 git 工作副本（worktree）。一個副本要通過全部檢查才會被收：不是主工作目錄、`git status` 乾淨、分支已完全併回主分支、資料夾超過 2 小時沒動、沒有 session 在裡面工作（locked／bare／detached 一律保留）。收的順序安全：先單獨刪掉副本裡的 junction／symlink（絕不刪到連結目標），再 `git worktree remove`（不用 `--force`），再 `git branch -d`（只收已併回的分支），最後 `git worktree prune`。任何一步失敗，該副本就保留並說明原因。session 結束時什麼都不刪，只提示有幾個副本可以收，收不收永遠由人決定。
 
 環境變數：
 

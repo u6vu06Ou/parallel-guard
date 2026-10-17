@@ -1,4 +1,5 @@
 import type { Register } from 'claude-code'
+import { auditWorktrees, cleanWorktrees } from './clean'
 
 // Busy = still doing work. 'idle'/'waiting' agents hold no CPU, so they do not count.
 const BUSY = new Set(['pending', 'running'])
@@ -94,10 +95,21 @@ function label(s: { busy: number; max: number; mem: number | undefined }) {
   return `agents ${s.busy}/${s.max} (all sessions)` + (s.mem === undefined ? '' : ` · free ${(s.mem / 1024).toFixed(1)}G`)
 }
 
+// Human-readable text of a worktree clean report: what was removed, what was
+// kept and why.
+function cleanText(r: Awaited<ReturnType<typeof cleanWorktrees>>): string {
+  if (r.error) return `worktree clean: ${r.error}`
+  const removed = r.cleaned.length
+    ? 'removed:\n' + r.cleaned.map(p => `  ${p}`).join('\n')
+    : 'removed: nothing'
+  const kept = r.entries.filter(e => !e.cleanable).map(e => `  ${e.wt.path} — ${e.reason}`)
+  return `worktree clean (${r.root}):\n${removed}\n` + (kept.length ? 'kept:\n' + kept.join('\n') : 'kept: nothing')
+}
+
 export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'parallel', description: 'Show running agents and free memory (parallel-guard)' })
+    await $.command.register({ name: 'parallel', description: 'Show running agents, free memory; `clean` removes finished git worktrees (parallel-guard)', argumentHint: '[clean]' })
     // Heartbeat: keep this session's count fresh so other sessions see it.
     $.clock.every(BEAT_MS, async () => {
       const s = await snapshot($)
@@ -108,6 +120,13 @@ export const register: Register = on => {
 
   on('session.end', async ($, e, next) => {
     await publish($, 0, await $.clock.now())
+    // Nothing is removed here, ever: only a count, so the next session can
+    // offer the cleanup as a human-triggered command.
+    try {
+      const r = await auditWorktrees($)
+      const n = r.entries.filter(e => e.cleanable).length
+      if (n > 0) await $.ui.notify(`${n} git worktree copies can be cleaned, run /parallel clean`)
+    } catch {}
     return next(e)
   })
 
@@ -126,7 +145,14 @@ export const register: Register = on => {
     return started
   }).catch(($, e, next) => next(e)) // guard broken -> never block work
 
-  on('command.run', { command: 'parallel' }, async $ => {
+  on('command.run', { command: 'parallel' }, async ($, e, next) => {
+    const sub = String(e.args ?? '').trim().toLowerCase()
+    if (sub.startsWith('clean')) {
+      const r = await cleanWorktrees($)
+      const t = cleanText(r)
+      $.ui.status(`worktree clean: ${r.cleaned.length} removed`)
+      return { text: t }
+    }
     const s = await snapshot($)
     $.ui.status(label(s))
     return { text: label(s) }

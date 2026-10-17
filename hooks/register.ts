@@ -3,6 +3,10 @@ import type { Register } from 'claude-code'
 // Busy = still doing work. 'idle'/'waiting' agents hold no CPU, so they do not count.
 const BUSY = new Set(['pending', 'running'])
 const MEM_TTL_MS = 15_000
+// Every session on the machine shares one limit: each writes its busy count to a
+// small file in a shared folder, and a spawn adds up every file that is still fresh.
+const BEAT_MS = 10_000
+const STALE_MS = 30_000 // a session that stopped writing (closed, crashed) stops counting
 
 let memCache: { at: number; freeMb: number | undefined } | undefined
 
@@ -14,6 +18,14 @@ async function limits($: any) {
     max: max > 0 ? max : cpus > 0 ? Math.min(10, Math.max(2, cpus - 2)) : 6,
     minFreeMb: minFree > 0 ? minFree : 2048,
   }
+}
+
+// Shared folder; undefined when no home directory is known (then each session counts alone).
+async function sharedDir($: any) {
+  const custom = await $.env.get('PARALLEL_GUARD_DIR')
+  if (custom) return custom
+  const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+  return home ? `${home}/.claude/parallel-guard` : undefined
 }
 
 // Free physical memory in MB; undefined when it cannot be read (then we never block on it).
@@ -38,22 +50,64 @@ async function freeMb($: any, now: number) {
   return mb
 }
 
-async function snapshot($: any) {
+async function ownBusy($: any) {
   const agents = await $.agent.list()
-  const busy = agents.filter((a: any) => BUSY.has(a.status)).length
+  return agents.filter((a: any) => BUSY.has(a.status)).length
+}
+
+async function publish($: any, busy: number, now: number) {
+  try {
+    const dir = await sharedDir($)
+    if (dir) await $.fs.write(`${dir}/${await $.session.id()}.json`, JSON.stringify({ busy, at: now }))
+  } catch {}
+}
+
+// Busy agents of every other live session on this machine.
+async function othersBusy($: any, now: number) {
+  let total = 0
+  try {
+    const dir = await sharedDir($)
+    if (!dir) return 0
+    const me = `${await $.session.id()}.json`
+    for (const f of await $.fs.list(dir)) {
+      if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name === me) continue
+      try {
+        const s = JSON.parse(await $.fs.read(`${dir}/${f.name}`))
+        if (now - Number(s.at) < STALE_MS && Number(s.busy) > 0) total += Number(s.busy)
+      } catch {}
+    }
+  } catch {}
+  return total
+}
+
+async function snapshot($: any) {
+  const now = await $.clock.now()
+  const own = await ownBusy($)
+  await publish($, own, now)
+  const busy = own + (await othersBusy($, now))
   const lim = await limits($)
-  const mem = await freeMb($, await $.clock.now())
+  const mem = await freeMb($, now)
   return { busy, mem, ...lim }
 }
 
 function label(s: { busy: number; max: number; mem: number | undefined }) {
-  return `agents ${s.busy}/${s.max}` + (s.mem === undefined ? '' : ` · free ${(s.mem / 1024).toFixed(1)}G`)
+  return `agents ${s.busy}/${s.max} (all sessions)` + (s.mem === undefined ? '' : ` · free ${(s.mem / 1024).toFixed(1)}G`)
 }
 
 export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'parallel', description: 'Show running agents and free memory (parallel-guard)' })
+    // Heartbeat: keep this session's count fresh so other sessions see it.
+    $.clock.every(BEAT_MS, async () => {
+      const s = await snapshot($)
+      $.ui.status(label(s))
+    })
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    await publish($, 0, await $.clock.now())
     return next(e)
   })
 
@@ -61,7 +115,7 @@ export const register: Register = on => {
     const s = await snapshot($)
     if (s.busy >= s.max) {
       $.ui.status(label(s))
-      return { deny: `parallel-guard: ${s.busy} agents already running (limit ${s.max}). Wait for one to finish, then retry.` }
+      return { deny: `parallel-guard: ${s.busy} agents already running across all sessions (limit ${s.max}). Wait for one to finish, then retry.` }
     }
     if (s.mem !== undefined && s.mem < s.minFreeMb) {
       $.ui.status(label(s))

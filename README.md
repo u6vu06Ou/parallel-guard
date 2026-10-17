@@ -28,8 +28,9 @@ At a Claude Code prompt:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `PARALLEL_GUARD_MAX` | CPU cores − 2, clamped to 2–10 | Max busy subagents before new spawns are denied |
+| `PARALLEL_GUARD_MAX` | CPU cores − 2, clamped to 2–10 | Max busy subagents, added up across every Claude Code session on the machine, before new spawns are denied |
 | `PARALLEL_GUARD_MIN_FREE_MB` | `2048` | Minimum free physical memory (MB) to allow a new spawn |
+| `PARALLEL_GUARD_DIR` | `~/.claude/parallel-guard` | Shared folder where each session writes its busy count (a session silent for 30 s stops counting) |
 
 Reads work on Windows and Linux/macOS; if free memory can't be read at all, the memory check is skipped and only the agent cap applies.
 
@@ -57,7 +58,8 @@ Claude Code 外掛：同一時間跑太多 subagent 時擋下新的，或剩餘�
 
 | 變數 | 預設 | 意義 |
 |---|---|---|
-| `PARALLEL_GUARD_MAX` | CPU 核心數 − 2，介於 2～10 | 忙碌 agent 上限，超過就擋 |
+| `PARALLEL_GUARD_MAX` | CPU 核心數 − 2，介於 2～10 | 忙碌 agent 上限（同一台電腦所有 Claude Code 視窗合計），超過就擋 |
 | `PARALLEL_GUARD_MIN_FREE_MB` | `2048` | 剩餘實體記憶體下限（MB），低於就擋 |
+| `PARALLEL_GUARD_DIR` | `~/.claude/parallel-guard` | 各視窗回報忙碌數的共用資料夾（30 秒沒更新的視窗不算） |
 
 讀不到記憶體時只套用 agent 上限。授權 MIT。

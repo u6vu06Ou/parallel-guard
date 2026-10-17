@@ -1,0 +1,1 @@
+{ "name": "parallel-guard", "version": "0.1.0", "author": { "name": "u6vu06Ou" }, "description": "Stops new subagents when too many are running or the machine is low on free memory. Zero model tokens." }

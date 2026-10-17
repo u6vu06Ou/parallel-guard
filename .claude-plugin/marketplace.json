@@ -1,0 +1,6 @@
+{
+  "name": "parallel-guard",
+  "owner": { "name": "u6vu06Ou" },
+  "description": "Safeguard that stops new Claude Code subagents when too many run at once or free memory is low.",
+  "plugins": [{ "name": "parallel-guard", "source": "./" }]
+}
